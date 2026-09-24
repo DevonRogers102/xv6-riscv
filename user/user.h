@@ -26,6 +26,8 @@ int pause(int);
 int uptime(void);
 int sync(void);
 
+int syscalltrace(void);
+
 // ulib.c
 int stat(const char *, struct stat *);
 char *strcpy(char *, const char *);
