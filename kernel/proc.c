@@ -10,6 +10,17 @@ struct cpu cpus[NCPU];
 
 struct proc proc[NPROC];
 
+int mode = 0;
+int epoch = 0;
+int debug_k(int enable)
+{
+  if(enable < 0 || enable > 1)
+    return -1;
+  mode = enable;
+  epoch = 0;
+  return 0;
+}
+
 struct proc *initproc;
 
 int nextpid = 1;
@@ -163,6 +174,10 @@ freeproc(struct proc *p)
   p->pagetable = 0;
   p->sz = 0;
   p->pid = 0;
+  
+  p->priority = 10;
+  p->num_epoch_slots = 0;
+  
   p->name[0] = 0;
   p->chan = 0;
   p->killed = 0;
@@ -255,8 +270,14 @@ growproc(int n)
 
 // Create a new process, copying the parent.
 // Sets up child kernel stack to return as if from fork() system call.
-int
+int // calls new priority fork with default priority so original functions still work
 kfork(void)
+{
+  return priority_fork_k(10);
+}
+
+int
+priority_fork_k(int priority) // kfork(void)
 {
   int i, pid;
   struct proc *np;
@@ -266,6 +287,9 @@ kfork(void)
   if ((np = allocproc()) == 0) {
     return -1;
   }
+
+  np->priority = priority;
+  np->num_epoch_slots = 0;
 
   // Copy user memory from parent to child.
   if (uvmcopy(p->pagetable, np->pagetable, p->sz) < 0) {
@@ -440,7 +464,64 @@ scheduler(void)
     // and wfi.
     intr_on();
     intr_off();
+    
+    int total = 0;
+    for(p = proc; p < &proc[NPROC]; p++){
+      acquire(&p->lock);
+      if(p->state == RUNNABLE) {
+        total += 20 - p->priority;
+        }
+      release(&p->lock);
+    }
+    
+      if(total == 0){ // in case nothing is runnable
+      asm volatile("wfi");
+      continue;
+    }
+    
+    for(p = proc; p < &proc[NPROC]; p++){
+    acquire(&p->lock);
+    if(p->state == RUNNABLE){
+      p->num_epoch_slots = 40 * (20 - p->priority) / total;
+      if(p->num_epoch_slots == 0)
+        p->num_epoch_slots = 1;
+    } else {
+      p->num_epoch_slots = 0;
+      }
+      release(&p->lock);
+    }
+    
+    
+    
+    epoch++;
+    if(mode)
+      printk("\n======================Epoch #%d==========================\n", epoch);
+      
+          for(p = proc; p < &proc[NPROC]; p++){
+      acquire(&p->lock);
+      if(p->state == RUNNABLE && p->num_epoch_slots > 0){
+        int slots = p->num_epoch_slots;
+        if(mode)
+          printk("Process: %s\nPID: %d\nPriority: %d\nNum Slots: %d\n\n",
+                 p->name, p->pid, p->priority, slots);
 
+        for(int i = 1; i <= slots && p->state == RUNNABLE; i++){
+          if(mode)
+            printk("Running process %s with PID %d and priority %d for %d/%d slots\n",
+                   p->name, p->pid, p->priority, i, slots);
+          p->state = RUNNING;
+          c->proc = p;
+          swtch(&c->context, &p->context);   // runs until next timer tick
+          c->proc = 0;
+          p->num_epoch_slots--;
+        }
+        if(mode)
+          printk("\n");
+      }
+      release(&p->lock);
+    }
+    
+/*
     int found = 0;
     for (p = proc; p < &proc[NPROC]; p++) {
       acquire(&p->lock);
@@ -461,11 +542,13 @@ scheduler(void)
         found = 1;
       }
       release(&p->lock);
+
     }
     if (found == 0) {
       // nothing to run; stop running on this core until an interrupt.
       asm volatile("wfi");
     }
+    */
   }
 }
 
