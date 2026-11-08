@@ -489,3 +489,25 @@ ismapped(pagetable_t pagetable, uint64 va)
   }
   return 0;
 }
+
+
+int
+trackframes(pagetable_t pagetable)
+{
+  int count =1;
+  
+  for(int i = 0; i < 512; i++){
+    pte_t pte = pagetable[i];
+    if((pte & PTE_V) == 0) {
+      continue;
+    }
+
+    if((pte & (PTE_R|PTE_W|PTE_X)) == 0){
+
+      count += trackframes((pagetable_t)PTE2PA(pte));
+    } else if(PTE2PA(pte) != (uint64)trampoline){
+      count++;
+    }
+  }
+  return count;
+}

@@ -88,3 +88,76 @@ malloc(uint nbytes)
         return 0;
   }
 }
+//page size = 4096, max pages 256
+
+
+static char *seglist[10];
+static char *segpage[256];
+static int   segclass[256];
+static int   segnpages;
+
+void *
+block_alloc(int nbytes)
+{
+  if(nbytes <= 0 || nbytes > 4096) {
+    return 0;
+  }
+
+  int size = 8, cls = 0;
+  while(size < nbytes){
+    size *= 2;
+    cls++;
+  }
+
+  if(seglist[cls] == 0){
+    if(segnpages == 256){
+      return 0;
+    }
+
+    char *page = sbrk(4096);
+    if(page == (char *)-1) {
+      return 0;
+    }
+
+    uint64 misalign = (uint64)page % 4096;
+    if(misalign){
+      if(sbrk(4096 - misalign) == (char *)-1) {
+        return 0;
+      }
+      page += 4096 - misalign;
+    }
+
+    segpage[segnpages] = page;
+    segclass[segnpages] = cls;
+    segnpages++;
+
+    for(int off = 0; off < 4096; off += size){
+      char *chunk = page + off;
+      *(char **)chunk = seglist[cls];
+      seglist[cls] = chunk;
+    }
+  }
+
+  char *chunk = seglist[cls];
+  seglist[cls] = *(char **)chunk;
+  return chunk;
+}
+
+void
+block_free(void *ptr)
+{
+  if(ptr == 0) {
+    return;
+}
+  char *chunk = (char *)ptr;
+  char *page = (char *)((uint64)chunk & ~(uint64)(4096 - 1));
+
+  for(int i = 0; i < segnpages; i++){
+    if(segpage[i] == page){
+      *(char **)chunk = seglist[segclass[i]];
+      seglist[segclass[i]] = chunk;
+      return;
+    }
+  }
+}
+
